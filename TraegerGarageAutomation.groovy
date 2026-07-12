@@ -58,16 +58,30 @@ def initialize() {
 def grillStateHandler(evt) {
     logDebug "Traeger grillState changed to ${evt.value}"
     if (evt.value in GRILL_ON_STATES) {
+        unschedule("runOffActions")
         if (garageDoor.currentValue("door") != "open") garageDoor.open()
         if (fanSwitch.currentValue("switch") != "on") fanSwitch.on()
         if (lightSwitch && lightSwitch.currentValue("switch") != "on") lightSwitch.on()
     } else if (evt.value in GRILL_OFF_STATES) {
-        if (garageDoor.currentValue("door") != "closed") garageDoor.close()
-        if (fanSwitch.currentValue("switch") != "off") fanSwitch.off()
-        if (lightSwitch && lightSwitch.currentValue("switch") != "off") lightSwitch.off()
+        // Debounced: the Traeger driver can replay a stale/retained grillState
+        // (e.g. shutdown/sleeping) right after a genuine on-state on MQTT
+        // reconnect. Wait 5s and re-check before acting, so a transient blip
+        // that gets superseded by a real "on" event doesn't slam the door shut.
+        runIn(5, "runOffActions")
     }
     // "cool_down" is intentionally ignored: the grill is still venting, so the
     // garage/fan/light stay on until it settles into a genuine off state.
+}
+
+def runOffActions() {
+    def current = traegerSwitch.currentValue("grillState")
+    if (!(current in GRILL_OFF_STATES)) {
+        logDebug "runOffActions: grillState is now ${current}, skipping stale off-trigger"
+        return
+    }
+    if (garageDoor.currentValue("door") != "closed") garageDoor.close()
+    if (fanSwitch.currentValue("switch") != "off") fanSwitch.off()
+    if (lightSwitch && lightSwitch.currentValue("switch") != "off") lightSwitch.off()
 }
 
 def doorHandler(evt) {
